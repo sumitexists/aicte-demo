@@ -1013,7 +1013,7 @@ function applyClock(state: State, to: string): State {
               (nxt ? `If not cleared, it escalates to ${roleLabel(nxt)} on ${addDays(st.dueAt, nextRung?.afterDays ?? 30)}.` : 'Final rung — reported to the Council as critical pendency.'),
           })
           audit.push(logEvent({
-            appId: app.id, ts: `${to}T08:00:0${level}`, role: 'SYSTEM', actor: ACTOR_NAME.SYSTEM,
+            appId: app.id, ts: `${fireDay}T08:00:0${level}`, role: 'SYSTEM', actor: ACTOR_NAME.SYSTEM,
             type: 'ESCALATION', action: `Escalation L${level} → ${roleLabel(recipient)}`,
             message: `Stage ${st.code} at ${app.ref} is ${overdue}. L${level} threshold was reached on ${fireDay}. Notified: ${rung.notify}.`,
           }))
@@ -1075,7 +1075,7 @@ function applyClock(state: State, to: string): State {
               (nextRecipient ? `Next rung: ${roleLabel(nextRecipient)} on ${addDays(ob.dueAt, nextRung?.afterDays ?? 30)}.` : 'Final rung — Council.'),
           })
           audit.push(logEvent({
-            appId: app.id, ts: `${to}T08:10:0${level}`, role: 'SYSTEM', actor: ACTOR_NAME.SYSTEM,
+            appId: app.id, ts: `${fireDay}T08:10:0${level}`, role: 'SYSTEM', actor: ACTOR_NAME.SYSTEM,
             type: 'ESCALATION', action: `Escalation L${level} → ${roleLabel(recipient)}`,
             message: `"${ob.label}" is ${lateDays} day(s) overdue. L${level} threshold was reached on ${fireDay}. Notified: ${rung.notify}.`,
           }))

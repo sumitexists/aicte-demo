@@ -50,7 +50,7 @@ const navFor = (role: string): NavItem[] =>
   role === 'INSTITUTION' ? NAV : NAV.filter((n) => n.key !== 'new')
 
 function Shell() {
-  const { now, role, setRole, advance, setNow, reset, apps, unread, institution } = useStore()
+  const { now, role, setRole, advance, setNow, reset, apps, unread, institution, audit } = useStore()
   const [page, setPage] = useState<Page>('dashboard')
   const [selected, setSelected] = useState<string | null>(null)
   const [open, setOpen] = useState(true)
@@ -103,6 +103,16 @@ function Shell() {
     return statusOf(a) === 'OPEN' && currentStage(a).actorRole === role
   }).length
   const roleEvcCount = role === 'EVC' || role === 'BUREAU' ? pendingEvcCount : 0
+  const timelineDays = [...new Set(audit
+    .filter((event) => {
+      const day = event.ts.slice(0, 10)
+      return day >= DEMO_START && day <= DEMO_END && ['TRANSITION', 'RETURN', 'DECISION', 'APPEAL', 'EVC_SCHEDULE', 'EVC_REPORT', 'DOCUMENT', 'VERIFY', 'ESCALATION'].includes(event.type)
+    })
+    .map((event) => event.ts.slice(0, 10)))].sort()
+  const visibleTimelineDays = timelineDays.length <= 8
+    ? timelineDays
+    : Array.from({ length: 8 }, (_, i) => timelineDays[Math.round(i * (timelineDays.length - 1) / 7)])
+  const eventsOnSelectedDay = audit.filter((event) => event.ts.slice(0, 10) === now)
 
   const demoSteps: DemoStep[] = [
     {
@@ -311,7 +321,8 @@ function Shell() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 px-6 pb-2">
+          <div className="px-6 pb-3">
+          <div className="flex items-center gap-3">
             <span className="text-[10px] text-gray-400">{fmt(DEMO_START)}</span>
             <input
               type="range"
@@ -327,6 +338,15 @@ function Shell() {
               className="h-1 w-full cursor-pointer appearance-none rounded-full bg-gray-200 accent-blue-600 dark:bg-gray-800"
             />
             <span className="text-[10px] text-gray-400">{fmt(DEMO_END)}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Timeline</span>
+            {visibleTimelineDays.map((day) => {
+              const count = audit.filter((event) => event.ts.slice(0, 10) === day).length
+              return <button key={day} title={`${count} recorded event(s) on ${fmt(day)}`} onClick={() => { setPlaying(false); setNow(day) }} className={cn('rounded-full border px-2 py-1 text-[10px] transition-colors', day === now ? 'border-[#123b63] bg-[#123b63] text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-[#e99424] hover:text-[#123b63] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300')}>{fmt(day)} · {count}</button>
+            })}
+            <span className="ml-auto text-[10px] text-gray-500">{eventsOnSelectedDay.length ? `${eventsOnSelectedDay.length} event(s) on ${fmt(now)} · ${eventsOnSelectedDay.slice(0, 2).map((event) => event.action).join(' · ')}` : `No recorded case event on ${fmt(now)}`}</span>
+          </div>
           </div>
         </div>
 

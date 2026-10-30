@@ -961,7 +961,25 @@ function applyClock(state: State, to: string): State {
   const from = state.now
   if (to === from) return state
   const forward = daysBetween(from, to) > 0
-  if (!forward) return { ...state, now: to }
+  if (!forward) {
+    // Clock-derived audit and alert events belong to the visible demo date.
+    // Remove only those generated events from the future; preserve user actions
+    // and seeded historical notifications. Clear dedupe keys so advancing
+    // forward from this point can generate the crossed events again.
+    return {
+      ...state,
+      now: to,
+      audit: state.audit.filter((event) => {
+        const eventDay = event.ts.slice(0, 10)
+        const isClockEvent = event.role === 'SYSTEM' && (event.type === 'ALERT' || event.type === 'ESCALATION')
+        return !isClockEvent || eventDay <= to
+      }),
+      notifications: state.notifications.filter((notification) =>
+        !notification.clockGenerated || notification.ts.slice(0, 10) <= to,
+      ),
+      emitted: [],
+    }
+  }
 
   const notifications: AppNotification[] = []
   const audit: AuditEvent[] = [...state.audit]
@@ -990,6 +1008,7 @@ function applyClock(state: State, to: string): State {
             to: recipient,
             level: after.level,
             kind: after.overdue ? 'ESCALATION' : 'REMINDER',
+            clockGenerated: true,
             subject: `${app.ref} — ${STAGE_LABEL[st.code]} ${overdue}`,
             body:
               `${app.institution}: ${STAGE_LABEL[st.code]} ${overdue} (due ${st.dueAt}). ` +
@@ -1026,6 +1045,7 @@ function applyClock(state: State, to: string): State {
           to: 'INSTITUTION',
           level: 0,
           kind: 'REMINDER',
+          clockGenerated: true,
           subject: `${off} days to: ${ob.label}`,
           body:
             `${app.institution} — ${ob.label} is due on ${ob.dueAt}. ` +
@@ -1059,6 +1079,7 @@ function applyClock(state: State, to: string): State {
             to: escTo,
             level: after.level,
             kind: 'ESCALATION',
+            clockGenerated: true,
             subject: `Overdue: ${ob.label}`,
             body:
               `${app.institution} — ${ob.label} is ${Math.abs(after.daysLeft)} day(s) overdue. ` +

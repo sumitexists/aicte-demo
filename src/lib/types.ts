@@ -168,6 +168,8 @@ export interface AppNotification {
   body: string
   kind: 'REMINDER' | 'ESCALATION' | 'DECISION'
   read?: boolean
+  /** Set for reminders/escalations created by the reversible demo clock. */
+  clockGenerated?: boolean
 }
 
 export interface EscalationRungConfig {

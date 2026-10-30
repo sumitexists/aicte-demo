@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --aicte-navy: #123b63;
+  --aicte-blue: #1769aa;
+  --aicte-saffron: #e99424;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--aicte-saffron);
+  outline-offset: 2px;
+}
+
+/* thin scrollbars for dense tables */
+* {
+  scrollbar-width: thin;
+}

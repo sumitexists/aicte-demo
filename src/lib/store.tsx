@@ -33,7 +33,6 @@ import {
   ESCALATION_LADDER,
   ladderRecipient,
   leaseGate,
-  nextEscalationTo,
 } from './deadlines'
 import { ACTOR_NAME, INSTITUTION_PROFILE, seedApplications, seedAudit, seedNotifications } from './seed'
 
@@ -989,45 +988,35 @@ function applyClock(state: State, to: string): State {
   for (const app of state.apps) {
     const st = currentStage(app)
     if (statusOf(app) === 'OPEN') {
-      const before = deadlineState(st.dueAt, from, rungs)
       const after = deadlineState(st.dueAt, to, rungs)
-      if (before.level !== after.level) {
-        const key = `${st.code}-${st.dueAt}-L${after.level}`
-        if (!emitted.has(key)) {
+      if (after.level > 0) {
+        const owner = STAGE_ACTOR[st.code]
+        // Emit every rung crossed, even when the demo clock jumps weeks ahead.
+        // Backfill every rung not yet recorded. The demo starts with some cases
+        // already overdue, so `before.level + 1` can skip an unrecorded L1.
+        for (let level = 1; level <= after.level; level++) {
+          const key = `${app.id}-${st.code}-${st.dueAt}-L${level}`
+          if (emitted.has(key)) continue
           emitted.add(key)
-          const rung = rungs[Math.max(0, after.level - 1)] ?? rungs[0]
-          const overdue = after.overdue ? `overdue by ${Math.abs(after.daysLeft)} day(s)` : `${after.daysLeft} day(s) remaining`
-          const owner = STAGE_ACTOR[st.code]
-          const recipient = ladderRecipient(after.level, owner)
-          const nxt = nextEscalationTo(after.level, owner)
-          const ladderDays = rungs[Math.min(rungs.length - 1, after.level)]?.afterDays ?? 30
+          const rung = rungs.find((item) => item.level === level) ?? rungs[level - 1] ?? rungs[0]
+          const fireDay = addDays(st.dueAt, level === 1 ? 1 : rung.afterDays)
+          const overdueDays = Math.max(1, daysBetween(st.dueAt, fireDay))
+          const overdue = `overdue by ${overdueDays} day(s)`
+          const recipient = ladderRecipient(level, owner)
+          const nextRung = rungs.find((item) => item.level === level + 1)
+          const nxt = level < 4 ? ladderRecipient(level + 1, owner) : null
           notifications.push({
-            id: nextId('NT'),
-            appId: app.id,
-            ts: to,
-            to: recipient,
-            level: after.level,
-            kind: after.overdue ? 'ESCALATION' : 'REMINDER',
-            clockGenerated: true,
+            id: nextId('NT'), appId: app.id, ts: fireDay, to: recipient, level,
+            kind: 'ESCALATION', clockGenerated: true,
             subject: `${app.ref} — ${STAGE_LABEL[st.code]} ${overdue}`,
-            body:
-              `${app.institution}: ${STAGE_LABEL[st.code]} ${overdue} (due ${st.dueAt}). ` +
-              `Addressed to ${roleLabel(recipient)}. ` +
-              (nxt
-                ? `If not cleared, it escalates to ${roleLabel(nxt)} on ${addDays(st.dueAt, ladderDays)} under the ladder.`
-                : `Final rung — reported to the Council as critical pendency.`),
+            body: `${app.institution}: ${STAGE_LABEL[st.code]} ${overdue} (due ${st.dueAt}). Addressed to ${roleLabel(recipient)}. ` +
+              (nxt ? `If not cleared, it escalates to ${roleLabel(nxt)} on ${addDays(st.dueAt, nextRung?.afterDays ?? 30)}.` : 'Final rung — reported to the Council as critical pendency.'),
           })
-          audit.push(
-            logEvent({
-              appId: app.id,
-              ts: `${to}T08:00:00`,
-              role: 'SYSTEM',
-              actor: ACTOR_NAME.SYSTEM,
-              type: after.level >= 2 ? 'ESCALATION' : 'ALERT',
-              action: after.overdue ? `Escalation L${after.level} → ${roleLabel(recipient)}` : `Reminder → ${roleLabel(recipient)}`,
-              message: `Stage ${st.code} at ${app.ref} is ${overdue}.${after.level ? ` Notified: ${rung.notify}.` : ''}`,
-            }),
-          )
+          audit.push(logEvent({
+            appId: app.id, ts: `${to}T08:00:0${level}`, role: 'SYSTEM', actor: ACTOR_NAME.SYSTEM,
+            type: 'ESCALATION', action: `Escalation L${level} → ${roleLabel(recipient)}`,
+            message: `Stage ${st.code} at ${app.ref} is ${overdue}. L${level} threshold was reached on ${fireDay}. Notified: ${rung.notify}.`,
+          }))
         }
       }
     }
@@ -1035,13 +1024,14 @@ function applyClock(state: State, to: string): State {
     for (const ob of app.obligations) {
       if (ob.status === 'verified') continue
       for (const off of crossedThresholds(ob.dueAt, from, to, ob.kind)) {
-        const key = `${ob.id}-${off}`
+        const fireDay = addDays(ob.dueAt, -off)
+        const key = `${app.id}-${ob.id}-${ob.dueAt}-reminder-${off}@${fireDay}`
         if (emitted.has(key)) continue
         emitted.add(key)
         notifications.push({
           id: nextId('NT'),
           appId: app.id,
-          ts: to,
+          ts: fireDay,
           to: 'INSTITUTION',
           level: 0,
           kind: 'REMINDER',
@@ -1054,7 +1044,7 @@ function applyClock(state: State, to: string): State {
         audit.push(
           logEvent({
             appId: app.id,
-            ts: `${to}T07:30:00`,
+            ts: `${fireDay}T07:30:00`,
             role: 'SYSTEM',
             actor: ACTOR_NAME.SYSTEM,
             type: 'ALERT',
@@ -1063,40 +1053,32 @@ function applyClock(state: State, to: string): State {
           }),
         )
       }
-      const before = deadlineState(ob.dueAt, from, rungs)
       const after = deadlineState(ob.dueAt, to, rungs)
-      if (before.level !== after.level && after.overdue) {
-        const key = `${ob.id}-esc-${after.level}`
-        if (!emitted.has(key)) {
+      if (after.overdue) {
+        // As with stage deadlines, include any rung that predates the demo's
+        // starting date when it has not yet been recorded in this run.
+        for (let level = 1; level <= after.level; level++) {
+          const key = `${app.id}-${ob.id}-${ob.dueAt}-esc-L${level}`
+          if (emitted.has(key)) continue
           emitted.add(key)
-          const rung = rungs[Math.min(rungs.length - 1, after.level - 1)] ?? rungs[0]
-          const escTo = ladderRecipient(after.level, 'INSTITUTION')
-          const nxt = nextEscalationTo(after.level, 'INSTITUTION')
+          const rung = rungs.find((item) => item.level === level) ?? rungs[level - 1] ?? rungs[0]
+          const fireDay = addDays(ob.dueAt, level === 1 ? 1 : rung.afterDays)
+          const lateDays = Math.max(1, daysBetween(ob.dueAt, fireDay))
+          const recipient = ladderRecipient(level, 'INSTITUTION')
+          const nextRung = rungs.find((item) => item.level === level + 1)
+          const nextRecipient = level < 4 ? ladderRecipient(level + 1, 'INSTITUTION') : null
           notifications.push({
-            id: nextId('NT'),
-            appId: app.id,
-            ts: to,
-            to: escTo,
-            level: after.level,
-            kind: 'ESCALATION',
-            clockGenerated: true,
-            subject: `Overdue: ${ob.label}`,
-            body:
-              `${app.institution} — ${ob.label} is ${Math.abs(after.daysLeft)} day(s) overdue. ` +
-              `Escalated to ${roleLabel(escTo)}. ` +
-              (nxt ? `Next rung: ${roleLabel(nxt)}.` : `Final rung — Council.`),
+            id: nextId('NT'), appId: app.id, ts: fireDay, to: recipient, level,
+            kind: 'ESCALATION', clockGenerated: true,
+            subject: `Overdue: ${ob.label} (L${level})`,
+            body: `${app.institution} — ${ob.label} is ${lateDays} day(s) overdue. Escalated to ${roleLabel(recipient)}. ` +
+              (nextRecipient ? `Next rung: ${roleLabel(nextRecipient)} on ${addDays(ob.dueAt, nextRung?.afterDays ?? 30)}.` : 'Final rung — Council.'),
           })
-          audit.push(
-            logEvent({
-              appId: app.id,
-              ts: `${to}T08:10:00`,
-              role: 'SYSTEM',
-              actor: ACTOR_NAME.SYSTEM,
-              type: 'ESCALATION',
-              action: `Escalation L${after.level} → ${roleLabel(escTo)}`,
-              message: `"${ob.label}" is ${Math.abs(after.daysLeft)} day(s) overdue. Notified: ${rung.notify}.`,
-            }),
-          )
+          audit.push(logEvent({
+            appId: app.id, ts: `${to}T08:10:0${level}`, role: 'SYSTEM', actor: ACTOR_NAME.SYSTEM,
+            type: 'ESCALATION', action: `Escalation L${level} → ${roleLabel(recipient)}`,
+            message: `"${ob.label}" is ${lateDays} day(s) overdue. L${level} threshold was reached on ${fireDay}. Notified: ${rung.notify}.`,
+          }))
         }
       }
     }
